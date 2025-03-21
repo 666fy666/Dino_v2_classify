@@ -1,0 +1,69 @@
+# 训练配置
+training:
+  # === 路径与模型 ===
+  dataset_path: "./search_data"     # 数据集路径（imagefolder格式）
+  output_dir: "./results"           # 输出目录
+  model_name: "facebook/dinov2-base"  # 预训练模型名称
+
+  # === 训练控制 ===
+  batch_size: 128                   # 训练批次大小（根据显存调整）
+  head_epochs: 15                   # 分类头训练轮数
+  fine_tune_epochs: 30              # 微调骨干网络轮数
+
+  # === 评估策略 ===
+  evaluation_strategy: "epoch"       # 评估频率：epoch/steps/no
+  eval_steps: 500                    # 当使用steps策略时的评估步数
+  eval_accumulation_steps: null      # 评估时梯度累积步数（通常为null）
+
+  # === 保存策略 ===
+  save_strategy: "epoch"            # 保存策略：epoch/steps/no
+  save_steps: 500                   # 当使用steps策略时的保存步数
+  save_total_limit: 3               # 最大保存检查点数
+
+  # === 优化器配置 ===
+  optimizer:
+    name: "adamw_torch"             # 优化器类型（adamw_torch/adamw_hf/...）
+    learning_rate: 0.00005           # 初始学习率
+    fine_tune_lr: 0.00001           # 微调阶段学习率
+    weight_decay: 0.05              # 权重衰减系数
+    warmup_ratio: 0.1               # 学习率预热比例（占总步数的比例）
+    adam_beta1: 0.9                 # Adam参数β1（动量衰减）
+    adam_beta2: 0.999               # Adam参数β2
+    max_grad_norm: 1.0              # 梯度裁剪阈值
+    scheduler: "linear"             # 学习率调度器（linear/cosine/constant）
+
+  # === 性能优化 ===
+  fp16: true                        # 启用FP16混合精度
+  bf16: false                       # 启用BF16混合精度（需硬件支持）
+  gradient_accumulation_steps: 2    # 梯度累积步数（显存不足时增大）
+  gradient_checkpointing: false     # 启用梯度检查点（节省显存）
+  torch_compile: false              # PyTorch 2.0编译优化（需GPU支持）
+  dataloader_num_workers: 8         # 数据加载线程数（建议CPU核心数一半）
+  dataloader_pin_memory: true       # 固定内存加速数据传输
+
+  # === 日志与调试 ===
+  logging_steps: 500                # 日志记录间隔步数
+  report_to: "tensorboard"         # 日志后端（tensorboard/wandb）
+  log_level: "passive"              # 日志级别（passive/info/warning/error）
+  disable_tqdm: false               # 禁用进度条（适用于无终端环境）
+
+  # === 高级配置 ===
+  load_best_model_at_end: true      # 训练结束后加载最佳模型
+  metric_for_best_model: "eval_accuracy"  # 模型选择指标
+  greater_is_better: true           # 指标是否越大越好
+  remove_unused_columns: false      # 保留未使用的数据列（自定义数据集时需要）
+  deepspeed_config: null            # DeepSpeed配置文件路径（如"ds_config.json"）
+
+  # === 数据预处理 ===
+  val_ratio: 0.2                    # 验证集划分比例
+  min_samples: 2                    # 类别最小样本数
+  augmentation:
+    train_crop_scale: [0.6, 1.0]    # 训练集随机裁剪范围
+    color_jitter: [0.4, 0.4, 0.2]  # 颜色抖动参数[亮度, 对比度, 饱和度]
+    random_rotate: 15               # 随机旋转角度（单位：度）
+
+# 预测配置
+inference:
+  tta_scales: [0.9, 1.0, 1.1]      # 测试时增强的缩放比例
+  tta_flip: true                   # 启用水平翻转增强
+  top_k: 5                         # 返回预测结果的Top-K值

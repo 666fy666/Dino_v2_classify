@@ -1,0 +1,18 @@
+conda install cudatoolkit=11.8.0 cudnn=8.9          conda install -c conda-forge cudatoolkit=12.6.2=0
+conda install -c nvidia nccl                         conda list cudatoolkit
+
+conda create --name dino python=3.8 --no-default-packages
+
+conda activate dino
+export LD_LIBRARY_PATH=/home/search6/miniconda3/envs/dino/lib:$LD_LIBRARY_PATH
+
+sudo nvidia-smi --gpu-reset -i <GPU_ID>
+watch -n 1 nvidia-smi
+
+ps aux | grep python | grep -v grep
+
+python train.py
+
+python infer.py
+
+
