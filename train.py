@@ -18,7 +18,7 @@ from models import Dinov2FineGrained
 from dataset import CustomDataset, safe_split_dataset
 
 # 配置加载
-with open("config.yaml") as f:
+with open("config.yaml",encoding="utf-8") as f:
     config = yaml.safe_load(f)
 
 # 初始化路径
