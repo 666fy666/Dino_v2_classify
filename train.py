@@ -11,14 +11,15 @@ from transformers import (
     TrainingArguments,
     Trainer,
     Dinov2Config,
-    EvalPrediction
+    EvalPrediction,
+    TrainerCallback
 )
 import evaluate
 from models import Dinov2FineGrained
 from dataset import CustomDataset, safe_split_dataset
 
 # 配置加载
-with open("config.yaml",encoding="utf-8") as f:
+with open("config.yaml", encoding="utf-8") as f:
     config = yaml.safe_load(f)
 
 # 初始化路径
@@ -44,9 +45,62 @@ warnings.filterwarnings("ignore", message="Was asked to gather along dimension 0
 # 定义评估指标
 metric = evaluate.load("accuracy")
 
+
+class EarlyStoppingCallback(TrainerCallback):
+    """自定义早停回调，监控验证集指标"""
+
+    def __init__(self, early_stopping_patience, early_stopping_threshold, metric_name, greater_is_better):
+        self.early_stopping_patience = early_stopping_patience
+        self.early_stopping_threshold = early_stopping_threshold
+        self.metric_name = metric_name
+        self.greater_is_better = greater_is_better
+        self.best_metric = None
+        self.patience_counter = 0
+
+    def on_evaluate(self, args, state, control, **kwargs):
+        # 确保有评估结果
+        if not state.log_history:
+            return
+
+        # 获取当前指标值
+        current_metrics = state.log_history[-1]
+        current_metric = current_metrics.get(self.metric_name)
+        if current_metric is None:
+            logger.warning(f"Early stopping metric {self.metric_name} not found in evaluation results.")
+            return
+
+        # 初始化最佳指标
+        if self.best_metric is None:
+            self.best_metric = current_metric
+            self.patience_counter = 0
+            return
+
+        # 比较当前指标与最佳指标
+        if self.greater_is_better:
+            improved = current_metric > (self.best_metric + self.early_stopping_threshold)
+        else:
+            improved = current_metric < (self.best_metric - self.early_stopping_threshold)
+
+        if improved:
+            self.best_metric = current_metric
+            self.patience_counter = 0
+            logger.info(f"⭐ New best {self.metric_name}: {self.best_metric:.4f}")
+        else:
+            self.patience_counter += 1
+            logger.info(
+                f"🚫 No improvement for {self.metric_name} ({self.patience_counter}/{self.early_stopping_patience})")
+            if self.patience_counter >= self.early_stopping_patience:
+                logger.info("🛑 Early stopping triggered, stopping training...")
+                control.should_training_stop = True
+                # 停止评估和保存以立即结束训练
+                control.should_evaluate = False
+                control.should_save = False
+
+
 def compute_metrics(p: EvalPrediction):
     preds = np.argmax(p.predictions, axis=1)
     return metric.compute(predictions=preds, references=p.label_ids)
+
 
 def train_pipeline():
     try:
@@ -166,12 +220,25 @@ def train_pipeline():
 
         # 第一阶段训练
         logger.info("\n=== 第一阶段：训练分类头 ===")
+        callbacks = []
+        if train_conf.get("early_stopping", {}).get("enabled", False):
+            early_stopping_conf = train_conf["early_stopping"]
+            callbacks.append(
+                EarlyStoppingCallback(
+                    early_stopping_patience=early_stopping_conf["patience"],
+                    early_stopping_threshold=early_stopping_conf["threshold"],
+                    metric_name=train_conf["metric_for_best_model"],
+                    greater_is_better=train_conf["greater_is_better"]
+                )
+            )
+
         trainer = Trainer(
             model=model,
             args=training_args,
             train_dataset=train_data,
             eval_dataset=val_data,
-            compute_metrics=compute_metrics  # 新增参数
+            compute_metrics=compute_metrics,
+            callbacks=callbacks
         )
         trainer.train()
 
@@ -180,12 +247,26 @@ def train_pipeline():
         model.unfreeze_backbone()
         training_args.learning_rate = train_conf["optimizer"]["fine_tune_lr"]
         training_args.num_train_epochs = train_conf["fine_tune_epochs"]
+
+        callbacks = []
+        if train_conf.get("early_stopping", {}).get("enabled", False):
+            early_stopping_conf = train_conf["early_stopping"]
+            callbacks.append(
+                EarlyStoppingCallback(
+                    early_stopping_patience=early_stopping_conf["patience"],
+                    early_stopping_threshold=early_stopping_conf["threshold"],
+                    metric_name=train_conf["metric_for_best_model"],
+                    greater_is_better=train_conf["greater_is_better"]
+                )
+            )
+
         trainer = Trainer(
             model=model,
             args=training_args,
             train_dataset=train_data,
             eval_dataset=val_data,
-            compute_metrics=compute_metrics  # 新增参数
+            compute_metrics=compute_metrics,
+            callbacks=callbacks
         )
         trainer.train()
 
@@ -198,6 +279,7 @@ def train_pipeline():
     except Exception as e:
         logger.error(f"训练流程异常终止: {str(e)}")
         raise
+
 
 if __name__ == "__main__":
     train_pipeline()
