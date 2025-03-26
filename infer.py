@@ -1,10 +1,16 @@
 import logging
+import os
+import time
 from safetensors import safe_open
 import torch
 from PIL import Image
 from torchvision import transforms
-from transformers import AutoImageProcessor, Dinov2Config, Dinov2ForImageClassification
+from transformers import AutoImageProcessor, Dinov2Config
 
+# 导入自定义模型
+from models import Dinov2FineGrained
+
+# 配置日志系统
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -54,37 +60,7 @@ class FineGrainedClassifier:
             raise
 
     def _build_model(self, config):
-        class CustomDinov2(Dinov2ForImageClassification):
-            def __init__(self, config):
-                super().__init__(config)
-                hidden_size = config.hidden_size
-
-                self.classifier = torch.nn.Sequential(
-                    torch.nn.Linear(hidden_size, hidden_size * 2),
-                    torch.nn.BatchNorm1d(hidden_size * 2),
-                    torch.nn.GELU(),
-                    torch.nn.Dropout(0.5),
-                    torch.nn.Linear(hidden_size * 2, hidden_size),
-                    torch.nn.LayerNorm(hidden_size),
-                    torch.nn.GELU(),
-                    torch.nn.Dropout(0.3),
-                    torch.nn.Linear(hidden_size, config.num_labels)
-                )
-
-                for module in self.classifier:
-                    if isinstance(module, torch.nn.Linear):
-                        torch.nn.init.xavier_normal_(module.weight)
-                        if module.bias is not None:
-                            torch.nn.init.zeros_(module.bias)
-
-                self.dinov2 = self.dinov2
-
-            def forward(self, pixel_values):
-                outputs = self.dinov2(pixel_values)
-                features = outputs.last_hidden_state[:, 0]
-                return self.classifier(features)
-
-        return CustomDinov2(config)
+        return Dinov2FineGrained(config)
 
     def _preprocess_image(self, image):
         processed = []
@@ -109,10 +85,9 @@ class FineGrainedClassifier:
         return torch.cat(processed)
 
     def predict(self, image_path, top_k=5):
+        """核心预测方法"""
         try:
-            logger.info(f"Predicting: {image_path}")
             image = Image.open(image_path).convert("RGB")
-
             inputs = self._preprocess_image(image)
 
             with torch.no_grad():
@@ -130,25 +105,146 @@ class FineGrainedClassifier:
                     "label": self.id2label.get(label_id, f"UNKNOWN_{label_id}"),
                     "confidence": f"{prob.item():.4f}"
                 })
-
-            logger.info("Prediction succeeded")
             return results
 
         except Exception as e:
-            logger.error(f"Prediction failed: {str(e)}")
+            logger.error(f"Prediction failed for {image_path}: {str(e)}")
             raise
+
+    def predict_single(self, image_path, top_k=5):
+        """单张图片预测"""
+        if not os.path.isfile(image_path):
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        logger.info(f"\n{'=' * 30} Processing single image {'=' * 30}")
+        start_time = time.perf_counter()
+        result = self.predict(image_path, top_k)
+        end_time = time.perf_counter()
+        duration = end_time - start_time
+
+        # 获取真实标签
+        true_label = os.path.basename(os.path.dirname(image_path))
+        predicted_label = result[0]['label']
+        accuracy = 1.0 if predicted_label == true_label else 0.0
+
+        self._log_results(image_path, result)
+        logger.info(f"Accuracy: {accuracy * 100:.2f}%")
+        logger.info(f"Inference time: {duration:.6f} seconds")
+        return result
+
+    def predict_folder(self, folder_path, top_k=5):
+        """单层文件夹预测"""
+        if not os.path.isdir(folder_path):
+            raise NotADirectoryError(f"Invalid folder: {folder_path}")
+
+        logger.info(f"\n{'=' * 30} Processing folder: {folder_path} {'=' * 30}")
+        processed_count = 0
+        correct_predictions = 0
+        total_time = 0.0
+
+        for filename in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, filename)
+            if self._is_image_file(file_path):
+                try:
+                    start_time = time.perf_counter()
+                    result = self.predict(file_path, top_k)
+                    end_time = time.perf_counter()
+                    duration = end_time - start_time
+                    total_time += duration
+                    processed_count += 1
+
+                    # 统计准确率
+                    true_label = os.path.basename(folder_path)
+                    predicted_label = result[0]['label']
+                    if predicted_label == true_label:
+                        correct_predictions += 1
+
+                    self._log_results(file_path, result)
+                except Exception as e:
+                    logger.error(f"Skipped {filename}: {str(e)}")
+                    continue
+
+        logger.info(f"Processed {processed_count} images in folder")
+        if processed_count > 0:
+            accuracy = correct_predictions / processed_count
+            avg_time = total_time / processed_count
+            logger.info(f"Average accuracy: {accuracy * 100:.2f}%")
+            logger.info(f"Average inference time per image: {avg_time:.6f} seconds")
+        else:
+            logger.info("No images processed, accuracy and time statistics unavailable.")
+        return processed_count
+
+    def predict_nested_folders(self, root_folder, top_k=5):
+        """嵌套文件夹预测"""
+        if not os.path.isdir(root_folder):
+            raise NotADirectoryError(f"Invalid root folder: {root_folder}")
+
+        logger.info(f"\n{'=' * 30} Processing nested folders: {root_folder} {'=' * 30}")
+        processed_count = 0
+        correct_predictions = 0
+        total_time = 0.0
+
+        for root, _, files in os.walk(root_folder):
+            for file in files:
+                file_path = os.path.join(root, file)
+                if self._is_image_file(file_path):
+                    try:
+                        start_time = time.perf_counter()
+                        result = self.predict(file_path, top_k)
+                        end_time = time.perf_counter()
+                        duration = end_time - start_time
+                        total_time += duration
+                        processed_count += 1
+
+                        # 统计准确率
+                        true_label = os.path.basename(root)
+                        predicted_label = result[0]['label']
+                        if predicted_label == true_label:
+                            correct_predictions += 1
+
+                        self._log_results(file_path, result)
+                    except Exception as e:
+                        logger.error(f"Skipped {file_path}: {str(e)}")
+                        continue
+
+        logger.info(f"Processed {processed_count} images in nested folders")
+        if processed_count > 0:
+            accuracy = correct_predictions / processed_count
+            avg_time = total_time / processed_count
+            logger.info(f"Average accuracy: {accuracy * 100:.2f}%")
+            logger.info(f"Average inference time per image: {avg_time:.6f} seconds")
+        else:
+            logger.info("No images processed, accuracy and time statistics unavailable.")
+        return processed_count
+
+    def _is_image_file(self, file_path):
+        """验证图片文件格式"""
+        valid_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.bmp')
+        return os.path.isfile(file_path) and file_path.lower().endswith(valid_extensions)
+
+    def _log_results(self, file_path, results):
+        """统一日志记录"""
+        logger.info(f"\nResults for: {file_path}")
+        for i, item in enumerate(results, 1):
+            confidence = float(item['confidence']) * 100
+            logger.info(f"Top-{i}: {item['label']} ({confidence:.2f}%)")
+        logger.info("-" * 80)
 
 
 if __name__ == "__main__":
     try:
-        classifier = FineGrainedClassifier(
-            model_path="/media/search3/E/Intern/fengyu/Dino_v2_classify/results/final_model")
+        # 初始化分类器
+        classifier = FineGrainedClassifier(model_path="./results/final_model")
 
-        result = classifier.predict("search_data/1-M0802010000-滚珠轴承/110300107560.jpeg")
+        # 示例用法 ---------------------------------------------------------
+        # 单张图片推理
+        # classifier.predict_single("search_data/1-M0802010000-滚珠轴承/110300107560.jpeg")
 
-        print("\nPrediction results:")
-        for i, item in enumerate(result, 1):
-            print(f"{i}. {item['label']} (Confidence: {float(item['confidence']) * 100:.2f}%)")
+        # 单层文件夹推理
+        # classifier.predict_folder("search_data/2-T1703020100-防尘口罩")
+
+        # 嵌套文件夹推理（自动遍历子目录）
+        classifier.predict_nested_folders("search_data")
 
     except Exception as e:
         logger.critical(f"Critical error: {str(e)}")
