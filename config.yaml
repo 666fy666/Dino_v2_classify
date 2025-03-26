@@ -7,26 +7,32 @@ training:
 
   # === 训练控制 ===
   batch_size: 128                   # 训练批次大小（根据显存调整）
-  head_epochs: 15                   # 分类头训练轮数
-  fine_tune_epochs: 30              # 微调骨干网络轮数
+  head_epochs: 100                   # 分类头训练轮数
+  fine_tune_epochs: 300              # 微调骨干网络轮数
+
+  # === 早停策略 ===
+  early_stopping:
+    enabled: true                  # 启用早停
+    patience: 10                    # 允许无改进的epoch数
+    threshold: 0.0001               # 视为改进的最小变化量
 
   # === 评估策略 ===
   evaluation_strategy: "epoch"       # 评估频率：epoch/steps/no
-  eval_steps: 500                    # 当使用steps策略时的评估步数
+  eval_steps: 2000                    # 当使用steps策略时的评估步数
   eval_accumulation_steps: null      # 评估时梯度累积步数（通常为null）
 
   # === 保存策略 ===
   save_strategy: "epoch"            # 保存策略：epoch/steps/no
-  save_steps: 500                   # 当使用steps策略时的保存步数
+  save_steps: 2000                   # 当使用steps策略时的保存步数
   save_total_limit: 3               # 最大保存检查点数
 
   # === 优化器配置 ===
   optimizer:
     name: "adamw_torch"             # 优化器类型（adamw_torch/adamw_hf/...）
-    learning_rate: 0.00005           # 初始学习率
-    fine_tune_lr: 0.00001           # 微调阶段学习率
+    learning_rate: 0.001           # 初始学习率
+    fine_tune_lr: 0.0001           # 微调阶段学习率
     weight_decay: 0.05              # 权重衰减系数
-    warmup_ratio: 0.1               # 学习率预热比例（占总步数的比例）
+    warmup_ratio: 0.15               # 学习率预热比例（占总步数的比例）
     adam_beta1: 0.9                 # Adam参数β1（动量衰减）
     adam_beta2: 0.999               # Adam参数β2
     max_grad_norm: 1.0              # 梯度裁剪阈值
@@ -42,7 +48,7 @@ training:
   dataloader_pin_memory: true       # 固定内存加速数据传输
 
   # === 日志与调试 ===
-  logging_steps: 500                # 日志记录间隔步数
+  logging_steps: 2000                # 日志记录间隔步数
   report_to: "tensorboard"         # 日志后端（tensorboard/wandb）
   log_level: "passive"              # 日志级别（passive/info/warning/error）
   disable_tqdm: false               # 禁用进度条（适用于无终端环境）
@@ -58,9 +64,33 @@ training:
   val_ratio: 0.2                    # 验证集划分比例
   min_samples: 2                    # 类别最小样本数
   augmentation:
-    train_crop_scale: [0.6, 1.0]    # 训练集随机裁剪范围
-    color_jitter: [0.4, 0.4, 0.2]  # 颜色抖动参数[亮度, 对比度, 饱和度]
+    # 基础变换
+    train_crop_scale: [ 0.6, 1.0 ]    # 训练集随机裁剪范围
+
+    # 颜色变换
+    color_jitter: [ 0.5, 0.5, 0.3 ]   # 颜色抖动参数[亮度, 对比度, 饱和度]
+    color_jitter_hue: 0.1           # 色调变化范围
+
+    # 几何变换
     random_rotate: 15               # 随机旋转角度（单位：度）
+    random_perspective: 0.2         # 随机透视变换概率
+    random_affine: # 随机仿射变换参数
+      translate: [ 0.1, 0.1 ]         # 平移范围
+      scale: [ 0.9, 1.1 ]             # 缩放范围
+      shear: 5                      # 剪切角度
+
+    # 高级变换
+    random_erasing: 0.2             # 随机擦除概率
+    gaussian_blur: # 高斯模糊参数
+      enabled: true                 # 是否启用
+      sigma: [ 0.1, 2.0 ]             # 模糊半径范围
+    grayscale: 0.1                  # 随机灰度化概率
+    solarize: # 随机曝光参数
+      enabled: true                 # 是否启用
+      threshold: 128                # 曝光阈值
+
+    # 自适应增强控制
+    adaptive_strength: true         # 是否启用自适应增强强度
 
 # 预测配置
 inference:
