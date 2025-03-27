@@ -1,14 +1,12 @@
-import os
-import random
-import numpy as np
-from torchvision import transforms
-from datasets import load_dataset, Image
-from sklearn.model_selection import train_test_split
-from transformers import AutoImageProcessor
-import torch
-from torch.utils.data import Dataset
 import logging
+import random
+
+import numpy as np
+import torch
 from PIL import ImageFilter, ImageOps
+from sklearn.model_selection import train_test_split
+from torch.utils.data import Dataset
+from torchvision import transforms
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +81,11 @@ class CustomDataset(Dataset):
         if is_train and augmentation_config.get("adaptive_strength", False):
             self.augmentation_strength = min(1.0, max(0.5, 1000 / self.num_classes))
             logger.info(f"使用自适应增强强度: {self.augmentation_strength:.2f}")
+
+        # 获取DINOv2的归一化参数
+        self.mean = self.processor.image_mean
+        self.std = self.processor.image_std
+        logger.info(f"使用DINOv2归一化参数 - 均值: {self.mean}, 标准差: {self.std}")
 
         if self.is_train:
             if not augmentation_config:
@@ -182,12 +185,13 @@ class CustomDataset(Dataset):
                 *geometric_transforms,
                 *advanced_transforms,
                 transforms.ToTensor(),
+                transforms.Normalize(mean=self.mean, std=self.std),  # 使用DINOv2的归一化参数
             ]
 
-            # 添加随机擦除
+            # 组合所有变换
             self.transform = transforms.Compose(transform_list)
 
-            # 随机擦除作为单独的步骤，因为它需要在ToTensor之后应用
+            # 随机擦除作为单独的步骤，因为它需要在ToTensor和Normalize之后应用
             self.random_erasing = None
             if "random_erasing" in augmentation_config:
                 erasing_prob = augmentation_config["random_erasing"]
@@ -200,7 +204,8 @@ class CustomDataset(Dataset):
             self.transform = transforms.Compose([
                 transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
                 transforms.CenterCrop(224),
-                transforms.ToTensor()
+                transforms.ToTensor(),
+                transforms.Normalize(mean=self.mean, std=self.std),  # 使用DINOv2的归一化参数
             ])
             self.random_erasing = None
 
@@ -212,21 +217,16 @@ class CustomDataset(Dataset):
         image = item["image"].convert("RGB")
         label = item["label"]
 
-        # 应用预处理
+        # 应用预处理（包括归一化）
         image = self.transform(image)
 
         # 应用随机擦除（如果启用）
         if self.random_erasing is not None:
             image = self.random_erasing(image)
 
-        processed = self.processor(
-            images=image,
-            return_tensors="pt",
-            do_rescale=False,
-            do_normalize=True
-        )
+        # 不需要再次归一化，因为已经在transform中完成
         return {
-            "pixel_values": processed.pixel_values.squeeze(),
+            "pixel_values": image,  # 直接使用已经归一化的图像张量
             "labels": torch.tensor(label)
         }
 
