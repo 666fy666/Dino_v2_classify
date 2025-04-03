@@ -170,7 +170,7 @@ def train_pipeline():
             # === 训练控制 ===
             num_train_epochs=train_conf["head_epochs"],  # 训练总轮数
             per_device_train_batch_size=train_conf["batch_size"],  # 单设备训练批次
-            per_device_eval_batch_size=train_conf["batch_size"] * 2,  # 单设备评估批次
+            per_device_eval_batch_size=train_conf["batch_size"],  # 单设备评估批次
 
             # === 优化器与调度 ===
             learning_rate=train_conf["optimizer"]["learning_rate"],  # 初始学习率
@@ -270,11 +270,19 @@ def train_pipeline():
         )
         trainer.train()
 
+
         # 保存最终模型
+        '''
         final_dir = output_dir / "final_model"
         model.save_pretrained(final_dir)
         processor.save_pretrained(final_dir)
         logger.info(f"模型已保存至：{final_dir}")
+        '''
+        final_dir = output_dir / "final_model"
+        # 只保存骨干网络和处理器
+        model.dinov2.save_pretrained(final_dir)
+        processor.save_pretrained(final_dir)
+        logger.info(f"模型已保存至：{final_dir}，不包含分类头")
 
     except Exception as e:
         logger.error(f"训练流程异常终止: {str(e)}")
