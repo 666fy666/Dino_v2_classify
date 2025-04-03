@@ -6,14 +6,14 @@ training:
   model_name: "facebook/dinov2-base"  # 预训练模型名称
 
   # === 训练控制 ===
-  batch_size: 128                   # 训练批次大小（根据显存调整）
-  head_epochs: 100                   # 分类头训练轮数
-  fine_tune_epochs: 500              # 微调骨干网络轮数
+  batch_size: 256                   # 训练批次大小（根据显存调整）
+  head_epochs: 30                   # 分类头训练轮数
+  fine_tune_epochs: 200              # 微调骨干网络轮数
 
   # === 早停策略 ===
   early_stopping:
     enabled: true                  # 启用早停
-    patience: 5                    # 允许无改进的epoch数
+    patience: 10                    # 允许无改进的epoch数
     threshold: 0.0001               # 视为改进的最小变化量
 
   # === 评估策略 ===
@@ -29,8 +29,8 @@ training:
   # === 优化器配置 ===
   optimizer:
     name: "adamw_torch"             # 优化器类型（adamw_torch/adamw_hf/...）
-    learning_rate: 0.01           # 初始学习率
-    fine_tune_lr: 0.001           # 微调阶段学习率
+    learning_rate: 0.005           # 初始学习率
+    fine_tune_lr: 0.0005           # 微调阶段学习率
     weight_decay: 0.05              # 权重衰减系数
     warmup_ratio: 0.15               # 学习率预热比例（占总步数的比例）
     adam_beta1: 0.9                 # Adam参数β1（动量衰减）
@@ -39,16 +39,16 @@ training:
     scheduler: "cosine"             # 学习率调度器（linear/cosine/constant）
 
   # === 性能优化 ===
-  fp16: true                        # 启用FP16混合精度
-  bf16: false                       # 启用BF16混合精度（需硬件支持）
+  fp16: false                       # 启用FP16混合精度
+  bf16: true                       # 启用BF16混合精度（需硬件支持）
   gradient_accumulation_steps: 2    # 梯度累积步数（显存不足时增大）
-  gradient_checkpointing: false     # 启用梯度检查点（节省显存）
+  gradient_checkpointing: true     # 启用梯度检查点（节省显存）
   torch_compile: false              # PyTorch 2.0编译优化（需GPU支持）
-  dataloader_num_workers: 16         # 数据加载线程数（建议CPU核心数一半）
+  dataloader_num_workers: 12         # 数据加载线程数（建议CPU核心数一半）
   dataloader_pin_memory: true       # 固定内存加速数据传输
 
   # === 日志与调试 ===
-  logging_steps: 10                # 日志记录间隔步数
+  logging_steps: 20                # 日志记录间隔步数
   report_to: "tensorboard"         # 日志后端（tensorboard/wandb）
   log_level: "passive"              # 日志级别（passive/info/warning/error）
   disable_tqdm: false               # 禁用进度条（适用于无终端环境）
