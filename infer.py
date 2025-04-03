@@ -6,7 +6,10 @@ import torch
 from PIL import Image
 from torchvision import transforms
 from transformers import AutoImageProcessor, Dinov2Config
+import pandas as pd
+from collections import defaultdict
 
+from grounded_sam2_hf_model import run_grounded_sam2
 # 导入自定义模型
 from models import Dinov2FineGrained
 
@@ -87,8 +90,14 @@ class FineGrainedClassifier:
     def predict(self, image_path, top_k=5):
         """核心预测方法"""
         try:
-            image = Image.open(image_path).convert("RGB")
-            inputs = self._preprocess_image(image)
+            processed_images = run_grounded_sam2(
+                img_path=image_path,
+                text_prompt="Mechanical parts.",
+                output_dir="visual",
+                visualize=False
+            )
+            # image = Image.open(image_path).convert("RGB")
+            inputs = self._preprocess_image(processed_images[0])
 
             with torch.no_grad():
                 logits = self.model(inputs)
@@ -174,6 +183,107 @@ class FineGrainedClassifier:
             logger.info("No images processed, accuracy and time statistics unavailable.")
         return processed_count
 
+    def predict_test(self, folder_path, top_k=5):
+        """单层文件夹预测（直接使用文件名作为series_code）"""
+        if not os.path.isdir(folder_path):
+            raise NotADirectoryError(f"Invalid folder: {folder_path}")
+
+        # 硬编码路径
+        PKL_PATH = "./data_seriesol.pkl"
+        EXCEL_PATH = "category_statistics.xlsx"
+
+        # 读取数据
+        try:
+            pkl_df = pd.read_pickle(PKL_PATH)
+            pkl_df['series_code'] = pkl_df['series_code'].astype(str)
+        except Exception as e:
+            raise RuntimeError(f"加载PKL文件失败: {str(e)}")
+
+        # 读取统计文件
+        try:
+            df_excel = pd.read_excel(EXCEL_PATH)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"统计文件 {EXCEL_PATH} 不存在")
+
+        # 初始化统计字典
+        category_counts = defaultdict(int)
+
+        logger.info(f"\n{'=' * 30} 处理文件夹: {folder_path} {'=' * 30}")
+        processed_count = 0
+        correct_predictions = 0
+        valid_labels_count = 0
+        total_time = 0.0
+
+        for filename in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, filename)
+            if self._is_image_file(file_path):
+                try:
+                    # 执行预测
+                    start_time = time.perf_counter()
+                    result = self.predict(file_path, top_k)
+                    duration = time.perf_counter() - start_time
+
+                    total_time += duration
+                    processed_count += 1
+
+                    # 获取真实标签
+                    true_label = None
+                    series_code = os.path.splitext(filename)[0]
+
+                    # 从PKL查找
+                    pkl_match = pkl_df[pkl_df['series_code'] == series_code]
+                    if not pkl_match.empty:
+                        pkl_row = pkl_match.iloc[0]
+                        category_code = pkl_row['category_code']
+                        true_label = f"{category_code}"
+                        valid_labels_count += 1
+
+                        # 统计匹配次数
+                        count = 0
+                        for i in range(top_k):
+                            pred_label = result[i]['label']
+                            if (true_label == pred_label) or (pred_label in true_label) or (true_label in pred_label):
+                                count += 1
+
+                        # 更新准确率统计
+                        if count > 0:
+                            correct_predictions += 1
+                            logger.info(f"文件 {filename} 匹配成功，匹配次数: {count}")
+
+                        # 累加到分类统计
+                        category_counts[category_code] += count
+
+                    else:
+                        logger.warning(f"PKL中未找到series_code: {series_code}")
+
+                    self._log_results(file_path, result)
+                except Exception as e:
+                    logger.error(f"跳过 {filename}: {str(e)}")
+                    continue
+
+        # 输出统计结果
+        logger.info(f"\n处理完成，有效图片数: {processed_count}")
+        if valid_labels_count > 0:
+            logger.info(f"识别准确率: {correct_predictions / valid_labels_count * 100:.2f}%")
+        if processed_count > 0:
+            logger.info(f"平均推理时间: {total_time / processed_count:.4f}s/张")
+
+        # 更新Excel文件
+        for code, total in category_counts.items():
+            mask = df_excel.iloc[:, 0] == code
+            if mask.any():
+                df_excel.loc[mask, df_excel.columns[2]] = total
+            else:
+                logger.warning(f"未找到category_code: {code}")
+
+        try:
+            df_excel.to_excel(EXCEL_PATH, index=False)
+            logger.info(f"统计结果已保存至 {EXCEL_PATH}")
+        except Exception as e:
+            logger.error(f"保存统计文件失败: {str(e)}")
+
+        return processed_count
+
     def predict_nested_folders(self, root_folder, top_k=5):
         """嵌套文件夹预测"""
         if not os.path.isdir(root_folder):
@@ -242,9 +352,10 @@ if __name__ == "__main__":
 
         # 单层文件夹推理
         # classifier.predict_folder("search_data/2-T1703020100-防尘口罩")
+        classifier.predict_test("./test")
 
         # 嵌套文件夹推理（自动遍历子目录）
-        classifier.predict_nested_folders("search_data")
+        # classifier.predict_nested_folders("search_data")
 
     except Exception as e:
         logger.critical(f"Critical error: {str(e)}")
