@@ -5,7 +5,7 @@ from transformers import Dinov2Config, Dinov2ForImageClassification
 class LabelSmoothCrossEntropy(torch.nn.Module):
     """标签平滑损失函数"""
 
-    def __init__(self, smoothing=0.2):
+    def __init__(self, smoothing=0.1):
         super().__init__()
         self.smoothing = smoothing
 
@@ -29,15 +29,15 @@ class Dinov2FineGrained(Dinov2ForImageClassification):
             torch.nn.Linear(hidden_size, hidden_size * 2),
             torch.nn.BatchNorm1d(hidden_size * 2),
             torch.nn.GELU(),
-            torch.nn.Dropout(0.3),
+            torch.nn.Dropout(0.4),
             torch.nn.Linear(hidden_size * 2, hidden_size),
             torch.nn.LayerNorm(hidden_size),
             torch.nn.GELU(),
-            torch.nn.Dropout(0.1),
+            torch.nn.Dropout(0.2),
             torch.nn.Linear(hidden_size, config.num_labels)
         )
         self._init_weights(self.classifier)
-        self.loss_fct = LabelSmoothCrossEntropy(smoothing=0.2)
+        self.loss_fct = LabelSmoothCrossEntropy(smoothing=0.1)
 
     def _init_weights(self, module):
         """自定义权重初始化"""
